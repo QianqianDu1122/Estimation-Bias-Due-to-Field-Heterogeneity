@@ -1,0 +1,151 @@
+---
+title: "EONR with price ratios"
+author: "Qianqian Du"
+date: "2024-08-15"
+output: html_document
+---
+
+```{r, cache=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+library(here)
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+library(data.table)
+library(flextable)
+library(plm)
+library(mgcv)
+library(aod)
+library(gratia)
+library(lme4)
+library(insight)
+library(fixest)
+library(modelsummary)
+library(gamm4)
+library(parallel)
+library(future.apply)
+library(future)
+```
+
+
+```{r}
+###=== upload the dataset ===###
+all_data <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data_for_analysis_revise.rds")) %>% 
+  filter(trial != "Pistorius_Loveless_2021") %>% 
+  filter(trial != "Pistorius_Elsie_2021") %>% 
+  filter(trial != "AnthonyFarms_F21_2023")
+
+
+###=== pooled quadratic ===###
+pooled_qudradtic <- feols(yield ~ n_rate + I(n_rate^2) + elev + slope + curv + clay + silt + Apr + May + Jun + Jul + Aug + GDD + EDD + I(n_rate*elev) + I(n_rate*slope) + I(n_rate*curv) + I(n_rate*clay) + I(n_rate*silt) + I(n_rate*Apr) + I(n_rate*May) + I(n_rate*Jun) + I(n_rate*Jul) + I(n_rate*Aug) + I(n_rate*GDD) + I(n_rate*EDD), cluster = ~ trial, data = all_data)
+
+
+###=== fixed quadratic ===###
+fixed_qudradtic <- feols(yield ~ n_rate + I(n_rate^2) + elev + slope + curv + clay + silt + Apr + May + Jun + Jul + Aug + GDD + EDD + I(n_rate*elev) + I(n_rate*slope) + I(n_rate*curv) + I(n_rate*clay) + I(n_rate*silt) + I(n_rate*Apr) + I(n_rate*May) + I(n_rate*Jun) + I(n_rate*Jul) + I(n_rate*Aug) + I(n_rate*GDD) + I(n_rate*EDD) | trial, cluster = ~ trial, data = all_data)
+
+```
+
+# calculate the EONR for different price ratios
+```{r}
+
+price <- expand_grid(corn_price = seq(2, 5, by = 0.2),
+                     n_price = seq(0.2, 1, by = 0.1))
+
+result_eonr_price <- data.frame()
+
+
+for (i in 1:nrow(price)) {
+  
+
+eval_data_1 <- expand_grid(
+  n_rate = seq(
+    quantile(all_data$n_rate, prob = 0.05, na.rm = TRUE), 
+    quantile(all_data$n_rate, prob = 0.95, na.rm = TRUE), 
+    length = 300
+  ),
+  elev = mean(all_data$elev, na.rm = TRUE),
+  slope = mean(all_data$slope, na.rm = TRUE),
+  curv = mean(all_data$curv, na.rm = TRUE),
+  clay = mean(all_data$clay, na.rm = TRUE),
+  silt = mean(all_data$silt, na.rm = TRUE),
+  tpi = mean(all_data$tpi, na.rm = TRUE),
+  Apr = mean(all_data$Apr, na.rm = TRUE),
+  May = mean(all_data$May, na.rm = TRUE),
+  Jun = mean(all_data$Jun, na.rm = TRUE),
+  Jul = mean(all_data$Jul, na.rm = TRUE),
+  Aug = mean(all_data$Aug, na.rm = TRUE),
+  Sep = mean(all_data$Sep, na.rm = TRUE),
+  Oct = mean(all_data$Oct, na.rm = TRUE),
+  EDD = mean(all_data$EDD, na.rm = TRUE),
+  GDD = mean(all_data$GDD, na.rm = TRUE),
+  trial = "Pistorius_SyfordNorthEast_2021",
+  state = "Illinois",
+  year = 2022
+) %>% 
+data.table() 
+
+corn_price = as.numeric(price[i, "corn_price"])
+N_price = as.numeric(price[i, "n_price"])
+
+
+### ---- pooled ---- ###
+pooled_eval <- eval_data_1 %>% 
+  .[, y_hat := predict(pooled_qudradtic, newdata = eval_data_1)] %>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+EONR_pooled <- filter(pooled_eval, profit == max(profit))
+  
+  ###=== get EONR for pooled ===###
+  get_eonr_pooled <- EONR_pooled[1,1]
+  
+### ---- Fixed effect ---- ###
+fixed_eval <- eval_data_1 %>% 
+  .[, y_hat := predict(fixed_qudradtic, newdata = eval_data_1)] %>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+EONR_fixed <- filter(fixed_eval, profit == max(profit))
+  
+###=== get EONR for pooled ===###
+  get_eonr_fixed <- EONR_fixed[1,1]
+  
+  get_eonr_diff <- get_eonr_pooled-get_eonr_fixed
+  
+  results_table <- data.frame(
+    get_eonr_pooled = as.numeric(EONR_pooled[1,1]),
+    get_eonr_fixed = as.numeric(EONR_fixed[1,1]),
+    get_eonr_diff = as.numeric(get_eonr_diff)
+  ) %>% 
+    mutate(price_ratio = N_price/corn_price)
+  
+  
+result_eonr_price <- rbind(result_eonr_price, results_table)
+
+}
+
+```
+
+# Plot the results
+```{r}
+
+EONR_price_fig <- ggplot(data = result_eonr_price) +
+  geom_line(aes(x = price_ratio, y = get_eonr_pooled, color = "Pooled Model")) +
+  geom_line(aes(x = price_ratio, y = get_eonr_fixed, color = "Fixed Effects Model")) +
+  theme_bw() +
+  ylab("Estimated EONR (lb/ac)") +
+  xlab("Price Ratio") +
+  scale_x_continuous(breaks = seq(0.05, 0.4, by = 0.05), limits = c(NA, 0.4))+
+  scale_color_manual(name = "Model Type", values = c("Pooled Model" = "black", "Fixed Effects Model" = "red"))
+
+EONR_price_fig
+
+# ggsave("/Users/qianqiandu/Desktop/figures/EONR_price.png",width = 6, height = 4, plot = EONR_price_fig, dpi = 600)
+
+```
+
+
+
+
+
+
+
+

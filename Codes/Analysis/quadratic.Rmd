@@ -1,0 +1,212 @@
+---
+title: "qudratic"
+author: "Qianqian Du"
+date: "2023-07-25"
+output:
+  bookdown::word_document2
+---
+
+```{r echo=FALSE, eval=TRUE, message=FALSE, cache=FALSE, warning=FALSE}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(here)
+library(patchwork)
+library(data.table)
+library(flextable)
+library(plm)
+library(gam)
+library(mgcv)
+library(aod)
+library(glmmTMB)
+library(matrixcalc)
+library(gratia)
+library(lme4)
+library(insight)
+library(fixest)
+library(aod)
+library(modelsummary)
+library(gamm4)
+```
+
+# Get data ready for regression analysis
+```{r}
+
+all_data <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data_for_analysis_revise.rds")) %>% 
+  filter(trial != "Pistorius_Loveless_2021") %>% 
+  filter(trial != "Pistorius_Elsie_2021") %>% 
+  filter(trial != "AnthonyFarms_F21_2023")
+
+```
+
+# Two models regression 
+```{r}
+###=== pooled quadratic ===###
+
+pooled <- feols(yield ~ n_rate + I(n_rate^2) + elev + slope + curv + clay + silt + Apr + May + Jun + Jul + Aug + GDD + EDD, cluster = ~ trial, data = all_data)
+
+
+pooled_interact <- feols(yield ~ n_rate + I(n_rate^2) + elev + slope + curv + clay + silt + Apr + May + Jun + Jul + Aug + GDD + EDD + I(n_rate*elev) + I(n_rate*slope) + I(n_rate*curv) + I(n_rate*clay) + I(n_rate*silt) + I(n_rate*Apr) + I(n_rate*May) + I(n_rate*Jun) + I(n_rate*Jul) + I(n_rate*Aug) + I(n_rate*GDD) + I(n_rate*EDD), cluster = ~ trial, data = all_data)
+
+summary(pooled_interact)
+
+
+
+###=== fixed effects quadratic ===###
+
+fixed <- feols(yield ~ n_rate + I(n_rate^2) + elev + slope + curv + clay + silt + Apr + May + Jun + Jul + Aug + GDD + EDD | trial, data = all_data)
+
+summary(fixed)
+
+
+fixed_interact <- feols(yield ~ n_rate + I(n_rate^2) + elev + slope + curv + clay + silt + Apr + May + Jun + Jul + Aug + GDD + EDD + I(n_rate*elev) + I(n_rate*slope) + I(n_rate*curv) + I(n_rate*clay) + I(n_rate*silt) + I(n_rate*Apr) + I(n_rate*May) + I(n_rate*Jun) + I(n_rate*Jul) + I(n_rate*Aug) + I(n_rate*GDD) + I(n_rate*EDD) | trial, cluster = ~ trial, data = all_data)
+
+summary(fixed_interact)
+
+```
+
+```{r coef-table, tab.cap = "Regression results from pooled model and field fixed effects model"}
+
+# Function to format small values in scientific notation
+format_coef <- function(x) {
+  ifelse(abs(x) < 0.001, format(x, scientific = TRUE, digits = 2), round(x, 3))
+}
+
+
+coef_table <- list("Pooled Model" = pooled_interact,
+     "Fixed Effects Model" = fixed_interact
+     ) %>% 
+  msummary(
+    coef_map = c("n_rate" = "N", "I(n_rate^2)" = "N^2", "elev" = "elevation", "slope" = "slope", "curv" = "curvature","clay" = "clay", "silt" = "silt", 
+                 "Apr" = "Apr precipitation", "May" = "May precipitation", "Jun" = "Jun precipitation", "Jul" = "Jul precipitation",
+                 "Aug" = "Aug precipitation", "GDD" = "GDD", "EDD" = "EDD",
+                 "I(n_rate * elev)" = "I(n_rate * elev)", "I(n_rate * slope)" = "I(n_rate * slope)", "I(n_rate * curv)" = "I(n_rate * curv)", "I(n_rate * clay)" ="I(n_rate * clay)",
+                 "I(n_rate * silt)" = "I(n_rate * silt)", "I(n_rate * Apr)" ="I(n_rate * Apr)", "I(n_rate * May)" = "I(n_rate * May)", "I(n_rate * Jun)" = "I(n_rate * Jun)", "I(n_rate * Jul)" ="I(n_rate * Jul)", "I(n_rate * Aug)" = "I(n_rate * Aug)", "I(n_rate * GDD)" = "I(n_rate * GDD)", "I(n_rate * EDD)" = "I(n_rate * EDD)"),
+    stars = TRUE,
+    gof_omit = "IC|Log",
+    fmt = format_coef,
+    output = "flextable"
+  ) %>% 
+  autofit() %>%
+  align_text_col(., align = "center") %>% 
+  align_nottext_col(., align = "center")
+
+coef_table
+```
+
+
+# Predicted yield 
+
+```{r}
+##-- plot for without fixed effect --##
+eval_data_1 <- expand_grid(
+  n_rate = seq(
+    quantile(all_data$n_rate, prob = 0.05, na.rm = TRUE), 
+    quantile(all_data$n_rate, prob = 0.95, na.rm = TRUE), 
+    length = 300
+  ),
+  elev = mean(all_data$elev, na.rm = TRUE),
+  slope = mean(all_data$slope, na.rm = TRUE),
+  curv = mean(all_data$curv, na.rm = TRUE),
+  clay = mean(all_data$clay, na.rm = TRUE),
+  silt = mean(all_data$silt, na.rm = TRUE),
+  tpi = mean(all_data$tpi, na.rm = TRUE),
+  Apr = mean(all_data$Apr, na.rm = TRUE),
+  May = mean(all_data$May, na.rm = TRUE),
+  Jun = mean(all_data$Jun, na.rm = TRUE),
+  Jul = mean(all_data$Jul, na.rm = TRUE),
+  Aug = mean(all_data$Aug, na.rm = TRUE),
+  Sep = mean(all_data$Sep, na.rm = TRUE),
+  Oct = mean(all_data$Oct, na.rm = TRUE),
+  EDD = mean(all_data$EDD, na.rm = TRUE),
+  GDD = mean(all_data$GDD, na.rm = TRUE),
+  trial = "Pistorius_SyfordNorthEast_2021",
+  state = "Illinois",
+  year = 2022
+) %>% 
+data.table() 
+
+corn_price = 4
+N_price = 0.5
+
+
+### ---- pooled ---- ###
+pooled_eval <- eval_data_1 %>% 
+  .[, y_hat := predict(pooled_interact, newdata = eval_data_1)] %>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+pooled_fig <- ggplot(data = pooled_eval)+
+  geom_line(aes(x = n_rate, y = y_hat))
+
+EONR_pooled <- filter(pooled_eval, profit == max(profit))
+
+EONR_pooled[1,1]
+
+
+
+##-- fixed effect --##
+
+eval_data_2 <- expand_grid(
+  n_rate = seq(
+    quantile(all_data$n_rate, prob = 0.05, na.rm = TRUE), 
+    quantile(all_data$n_rate, prob = 0.95, na.rm = TRUE), 
+    length = 300
+  ),
+  elev = mean(all_data$elev, na.rm = TRUE),
+  slope = mean(all_data$slope, na.rm = TRUE),
+  curv = mean(all_data$curv, na.rm = TRUE),
+  clay = mean(all_data$clay, na.rm = TRUE),
+  silt = mean(all_data$silt, na.rm = TRUE),
+  tpi = mean(all_data$tpi, na.rm = TRUE),
+  Apr = mean(all_data$Apr, na.rm = TRUE),
+  May = mean(all_data$May, na.rm = TRUE),
+  Jun = mean(all_data$Jun, na.rm = TRUE),
+  Jul = mean(all_data$Jul, na.rm = TRUE),
+  Aug = mean(all_data$Aug, na.rm = TRUE),
+  Sep = mean(all_data$Sep, na.rm = TRUE),
+  Oct = mean(all_data$Oct, na.rm = TRUE),
+  EDD = mean(all_data$EDD, na.rm = TRUE),
+  GDD = mean(all_data$GDD, na.rm = TRUE),
+  trial = "Pistorius_SyfordNorthEast_2021",
+  state = "Illinois",
+  year = 2022
+) %>% 
+data.table() 
+##-- plot for with fixed effect --##
+
+fixed_eval <- eval_data_2 %>% 
+  .[, y_hat := predict(fixed_interact, newdata = eval_data_2)]%>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+
+
+EONR_fixed <- filter(fixed_eval, profit == max(profit))
+
+EONR_fixed
+
+fixed_fig <- ggplot(data = fixed_eval)+
+  geom_line(aes(x = n_rate, y = y_hat))
+
+
+```
+
+```{r yield-response-functions, fig.cap="Predicted yield response functions with and without field fixed effects"}
+##-- over all figure --##
+
+qudratic_fig <- ggplot() +
+  geom_line(aes(x = n_rate, y = y_hat+33.5, color = "Fixed Effect Model"), data = fixed_eval, size = 0.9) +
+  geom_line(aes(x = n_rate, y = y_hat, color = "Pooled Model"), data = pooled_eval, size = 0.9) +
+  theme_bw() +
+  ylab("Yield (bu/ac)") +
+  xlab("N rate (lb/ac)") +
+  scale_color_manual(name = "Model Type", values = c("Pooled Model" = "black", "Fixed Effect Model" = "red")) +
+  theme(legend.position = "right")  # Position the legend on the right side of the plot
+
+# Display the plot
+qudratic_fig
+
+# ggsave(qudratic_fig, "/Users/qianqiandu/Desktop/figures/yield_response.png")
+
+# ggsave("/Users/qianqiandu/Desktop/figures/yield_response.png",width = 6, height = 4, plot = qudratic_fig, dpi = 600)
+```
+

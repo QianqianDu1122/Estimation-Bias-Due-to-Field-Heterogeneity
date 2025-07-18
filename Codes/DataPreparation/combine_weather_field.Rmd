@@ -1,0 +1,455 @@
+---
+title: "Add weather variable"
+author: "Qianqian Du"
+date: "2023-07-12"
+output: html_document
+---
+
+
+# Objective:
+
++ Get the weather data from daymet.
+  + N
++ Incorporate the weather data into the corn data so that all variables can be included in GAM analysis.
+  + get monthly precipitation amound for Apr to Sep
+  + get the number of days that temperture exceed 32 for Apr to Sep
+  + 
+  
+```{r echo=FALSE, eval=TRUE, message=FALSE, cache=FALSE, warning=FALSE}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(here)
+library(patchwork)
+library(data.table)
+library(flextable)
+library(plm)
+library(gam)
+library(mgcv)
+library(aod)
+library(glmmTMB)
+library(matrixcalc)
+library(gamm4)
+library(gratia)
+library(lme4)
+library(insight)
+library(scam)
+library(forstringr)
+```
+
+
+```{r}
+SD <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/field_weather_CLC_2012_2022.csv") %>% 
+  mutate(area = "SD")
+
+IL_N <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/field_weather_N_IL_2012_2022_1.csv") %>% 
+  mutate(area = "IL_N")
+
+
+IL_C <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/field_weather_C_IL_2012_2022.csv") %>% 
+  mutate(area = "IL_C")
+
+IL_S <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/field_weather_S_IL_2012_2022.csv") %>% 
+  mutate(area = "IL_S")
+
+
+OH <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/field_weather_OH_2012_2022.csv") %>% 
+  mutate(area = "OH")
+
+Rendel_NofMineralView <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/Rendel_NofMineralView_2012_2022.csv") %>% 
+  mutate(area = "Rendel_NofMineralView")
+
+M01 <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/field_weather_M01_2012_2022.csv") %>% 
+  mutate(area = "M01")
+
+DuraClub <- read.csv("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Codes/Codes_indiv/QQ/Aggregate_reports/Data/field_weather_DuraClub_2012_2022.csv") %>% 
+  mutate(area = "Duraclub")
+
+
+```
+
+
+```{r}
+weather_data <- rbind(IL_N, IL_C) %>% 
+  rbind(., IL_S) %>% 
+  rbind(., OH) %>% 
+  rbind(., Rendel_NofMineralView) %>% 
+  rbind(., M01) %>% 
+  rbind(., DuraClub)
+
+```
+
+```{r}
+
+#/*=================================================*/
+#' # ### === get precipitation data === ###
+#/*=================================================*/
+
+weather_data_analysis_precip <- weather_data %>% 
+  mutate(month = case_when(yday <= 31 ~ "Jan",
+                           yday > 31 & yday <= 59 ~ "Feb",
+                           yday > 59 & yday <= 90 ~ "Mar",
+                           yday > 90 & yday <= 120 ~ "Apr",
+                           yday > 120 & yday <= 151 ~ "May",
+                           yday > 151 & yday <= 181 ~ "Jun",
+                           yday > 181 & yday <= 211 ~ "Jul",
+                           yday > 211 & yday <= 240 ~ "Aug",
+                           yday > 240 & yday <= 271 ~ "Sep",
+                           yday > 271 & yday <= 301 ~ "Oct",
+                           yday > 301 & yday <= 331 ~ "Nov",
+                           yday > 331 & yday <= 366 ~ "Dec",
+  )) %>% 
+  data.table() %>% 
+  .[year == 2021 | year == 2022, ] %>% 
+  .[, .(month_precip = sum(prcp)), by = c("year", "month", "area")] %>% 
+  dcast(., year + area ~ month, value.var = "month_precip")
+
+
+weather_data_analysis_precip$year <- as.character(weather_data_analysis_precip$year)
+
+#/*=================================================*/
+#' # ### === get temperature data === ###
+#/*=================================================*/
+
+weather_data_analysis_temp <- weather_data %>% 
+  mutate(month = case_when(yday <= 31 ~ "Jan",
+                           yday > 31 & yday <= 59 ~ "Feb",
+                           yday > 59 & yday <= 90 ~ "Mar",
+                           yday > 90 & yday <= 120 ~ "Apr",
+                           yday > 120 & yday <= 151 ~ "May",
+                           yday > 151 & yday <= 181 ~ "Jun",
+                           yday > 181 & yday <= 211 ~ "Jul",
+                           yday > 211 & yday <= 240 ~ "Aug",
+                           yday > 240 & yday <= 271 ~ "Sep",
+                           yday > 271 & yday <= 301 ~ "Oct",
+                           yday > 301 & yday <= 331 ~ "Nov",
+                           yday > 331 & yday <= 366 ~ "Dec",
+  )) %>% 
+  data.table() %>%
+  .[year == 2021 | year == 2022, ] %>%
+  .[tmax >= 32, .(counts = .N), by = c("year", "month", "area")] %>% 
+  dcast(., year + area ~ month, value.var = "counts") %>% 
+  setnames("May", "May_t") %>%
+  setnames("Jun", "Jun_t") %>% 
+  setnames("Jul", "Jul_t") %>% 
+  setnames("Aug", "Aug_t") %>% 
+  setnames("Sep", "Sep_t")
+
+weather_data_analysis_temp$year <- as.character(weather_data_analysis_temp$year) 
+
+weather_data_analysis_temp[is.na(weather_data_analysis_temp)] <- 0
+
+
+#/*=================================================*/
+#' # ### === get Extreme Degree Days data === ###
+#/*=================================================*/
+
+weather_data_analysis_EDD <- weather_data %>% 
+  mutate(month = case_when(yday <= 31 ~ "Jan",
+                           yday > 31 & yday <= 59 ~ "Feb",
+                           yday > 59 & yday <= 90 ~ "Mar",
+                           yday > 90 & yday <= 120 ~ "Apr",
+                           yday > 120 & yday <= 151 ~ "May",
+                           yday > 151 & yday <= 181 ~ "Jun",
+                           yday > 181 & yday <= 211 ~ "Jul",
+                           yday > 211 & yday <= 240 ~ "Aug",
+                           yday > 240 & yday <= 271 ~ "Sep",
+                           yday > 271 & yday <= 301 ~ "Oct",
+                           yday > 301 & yday <= 331 ~ "Nov",
+                           yday > 331 & yday <= 366 ~ "Dec",
+  )) %>% 
+  data.table() %>%
+  .[year == 2021 | year == 2022, ] %>% 
+  .[, EDD_daily := pmax(0, tmax - 29)] %>% 
+  .[month == "Apr"| month == "May"| month == "Jun" | month == "Jul"| month == "Aug"| month == "Sep", .(EDD = sum(EDD_daily)), by = c("year", "area")]
+
+weather_data_analysis_EDD$year <- as.character(weather_data_analysis_EDD$year) 
+
+
+weather_data_analysis_EDD$EDD %>% unique() %>% sort()
+
+weather_data_analysis_EDD[EDD == "33.16", ]
+
+
+```
+
+
+```{r}
+data_2021 <- readRDS("/Users/qianqiandu/Library/CloudStorage/Box-Box/Field_fixed_effects/Shared/Data/Data_for_analysis/data2021.rds")
+
+data_2022 <- readRDS("/Users/qianqiandu/Library/CloudStorage/Box-Box/Field_fixed_effects/Shared/Data/Data_for_analysis/data2022.rds")
+
+all_data <- rbind(data_2021, data_2022)
+
+head(all_data)
+
+# all_data$field %>% unique()
+
+###--- create mean variables for the Mundlak method ---###
+
+all_data <- all_data %>% 
+  data.table() %>% 
+  .[, mean_elev := mean(elev, na.rm = TRUE), by = field] %>% 
+  .[, mean_slope := mean(slope, na.rm = TRUE), by = field] %>% 
+  .[, mean_curv := mean(curv, na.rm = TRUE), by = field] %>% 
+  .[, mean_tpi := mean(tpi, na.rm = TRUE), by = field] %>% 
+  .[, mean_N := mean(n_rate, na.rm = TRUE), by = field]
+
+all_data <- all_data %>% 
+  mutate(area = case_when(field == "F98" ~ "OH",
+                          field == "F104" ~ "OH",
+                          field == "LaueLib80" ~ "IL_C",
+                          field == "Dougshome" ~ "IL_N",
+                          field == "NofMineralView" ~ "Rendel_NofMineralView", 
+                          field == "Florence80" ~ "IL_N", 
+                          field == "42ac" ~ "Rendel_NofMineralView", 
+                          field == "DamgaardWest" ~ "IL_N",
+                          field == "SyfordNorthEast" ~ "IL_C",
+                          field == "JensenWest" ~ "IL_C",
+                          field == "DJWest" ~ "IL_N", 
+                          field == "Goldenrod" ~ "IL_S", 
+                          field == "Field32" ~ "IL_C", 
+                          field == "Elsie" ~ "IL_C", 
+                          field == "Loveless" ~ "IL_C",
+                          field == "Wirth" ~ "IL_N", 
+                          field == "Rishel" ~ "IL_N", 
+                          field == "F17" ~ "OH", 
+                          field == "Andrews" ~ "IL_C",
+                          field == "PerrySouth" ~ "IL_N", 
+                          field == "Field1" ~ "IL_C",
+                          field == "ShellebargerPainterCreekArcanum" ~ "OH", 
+                          field == "M01" ~ "M01", 
+                          field == "BostonWest" ~ "Rendel_NofMineralView",
+                          field == "P1" ~ "Duraclub", 
+                          field == "R37" ~ "Duraclub", 
+                          field == "D09" ~ "Duraclub"
+                          ))
+
+```
+
+
+```{r}
+
+analysis_data <- left_join(all_data, weather_data_analysis_precip, by = c("area", "year")) %>% 
+  left_join(., weather_data_analysis_temp, by = c("area", "year")) %>% 
+  left_join(., weather_data_analysis_EDD, by = c("area","year"))
+
+
+# saveRDS(analysis_data, "/Users/qianqiandu/Library/CloudStorage/Box-Box/Field_fixed_effects/Shared/Data/Data_for_analysis/field_with_weather.rds")
+
+
+
+final_data <- analysis_data[, c("field", "year", "yield", "n_rate", "elev", "slope", "curv", "area", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "EDD")] %>% 
+  na.omit()
+
+
+
+```
+
+
+# Run regression using GAM with precipitation and tempreature 
+
+
+# Pooled 
+
+```{r cache=TRUE}
+pooled_gam <- gamm4(yield ~ s(n_rate, k = 4) + s(elev) + s(slope) + s(curv) + s(Apr) + s(May) + s(Jun) + s(Jul) + s(Aug) + s(Sep) + s(EDD), data = analysis_data)
+
+summary(pooled_gam$gam)
+
+```
+
+
+# Fixed effect (field)
+
+```{r cache=TRUE}
+###--- gamm4() with field fixed effect ---###
+
+fixed_gam <- gamm4(yield ~ s(n_rate, k = 4) + s(elev) + s(slope) + s(curv) + s(Apr) + s(May) + s(Jun) + s(Jul) + s(Aug) + s(Sep) + s(EDD) + field, data = final_data)
+
+summary(fixed_gam$gam)
+
+```
+
+
+## Visualize the two models' production function 
+
+```{r cache=TRUE}
+##-- plot for without fixed effect --##
+eval_data <- expand_grid(
+  n_rate = seq(
+    quantile(analysis_data$n_rate, prob = 0.10, na.rm = TRUE), 
+    quantile(analysis_data$n_rate, prob = 0.90, na.rm = TRUE), 
+    length = 300
+  ),
+  elev = mean(analysis_data$elev, na.rm = TRUE),
+  slope = mean(analysis_data$slope, na.rm = TRUE),
+  curv = mean(analysis_data$curv, na.rm = TRUE),
+  Apr = mean(analysis_data$Apr, na.rm = TRUE),
+  May = mean(analysis_data$May, na.rm = TRUE),
+  Jun = mean(analysis_data$Jun, na.rm = TRUE),
+  Jul = mean(analysis_data$Jul, na.rm = TRUE),
+  Aug = mean(analysis_data$Aug, na.rm = TRUE),
+  Sep = mean(analysis_data$Sep, na.rm = TRUE),
+  EDD = mean(analysis_data$EDD, na.rm = TRUE)
+) %>% 
+data.table() 
+
+##-- plot for without fixed effect --##
+corn_price = 4
+N_price = 0.4
+
+pooled <- eval_data %>% 
+  .[, y_hat := predict(pooled_gam$gam, newdata = eval_data)] %>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+EONR_pooled <- filter(pooled, profit == max(profit))
+
+
+pooled_fig <- ggplot(data = pooled)+
+  geom_line(aes(x = n_rate, y = y_hat))
+
+
+##-- fixed effect --##
+
+eval_data_fixed <- expand_grid(
+  n_rate = seq(
+    quantile(all_data$n_rate, prob = 0.05, na.rm = TRUE), 
+    quantile(all_data$n_rate, prob = 0.95, na.rm = TRUE), 
+    length = 300
+  ),
+  elev = mean(all_data$elev, na.rm = TRUE),
+  slope = mean(all_data$slope, na.rm = TRUE),
+  curv = mean(all_data$curv, na.rm = TRUE),
+  field = "SyfordNorthEast"
+) %>% 
+data.table() 
+
+##-- plot for with fixed effect --##
+
+fixed <- eval_data_fixed %>% 
+  .[, y_hat := predict(fixed_gam$gam, newdata = eval_data_fixed)]%>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+EONR_fixed <- filter(fixed, profit == max(profit))
+
+
+fixed_fig <- ggplot(data = fixed)+
+  geom_line(aes(x = n_rate, y = y_hat))
+
+
+##-- over all figure --##
+ggplot()+
+  geom_line(aes(x = n_rate, y = y_hat), data = fixed, color = "red")+
+  geom_line(aes(x = n_rate, y = y_hat), data = pooled)+
+  theme_bw()+
+  ggtitle("black is pooled")+
+  ylab("Yield (bu/ac)")+
+  xlab("N rate (lb/ac)")
+
+```
+
+Change the range of the figure
+```{r cache=TRUE}
+
+fixed_change_y <- eval_data_fixed %>% 
+  .[, y_hat := predict(fixed_gam$gam, newdata = eval_data_fixed)] %>% 
+  .[, y_hat_1 := y_hat - 330 ]
+
+
+fixed_fig_1 <- ggplot()+
+  geom_line(aes(x = n_rate, y = y_hat_1), data = fixed_change_y, color = "red")+
+  geom_line(aes(x = n_rate, y = y_hat), data = pooled)+
+  theme_bw()+
+  ylab("Yield (bu/ac)")+
+  xlab("N rate (lb/ac)")
+  # annotate("text", label = "black is pooled, \n s(N, k = 6)", x = 130, y = 180)+
+  # annotate("text", label = "pooled 231, fixed 250 (corner solu)", x = 200, y = 165)
+
+fixed_fig_1
+
+```
+
+
+# Based on the random effect result, do the Mundlak test
+
+## Random effect (with field means for the Mundlak method)
+
+```{r cache=TRUE, cache.lazy = FALSE, eval=FALSE, echo=TRUE}
+###--- gamm4() with random effect ---###
+
+gamm4_random <- gamm4(yield ~ s(n_rate, k = 4) + s(elev, k = 8) + s(slope, k = 8) + s(curv, k = 8) + s(mean_N, k = 8) + s(mean_elev, k = 8) + s(mean_slope, k = 8) + s(mean_curv, k = 8), random = ~ (1 | field), data = all_data)
+# takes 27 mins
+
+# gamm4_random <- gamm4(yield ~ s(n_rate, k = 6) + s(elev, k = 6) + s(slope, k = 6) + s(curv, k = 6) + s(mean_N, k = 6) + s(mean_elev, k = 6) + s(mean_slope, k = 6) + s(mean_curv, k = 6), random = ~ (1 | field), data = all_data)
+
+summary(gamm4_random$gam)
+```
+
+
+## Wald test for GAM model
+
+$$
+W = (R \hat{\beta} - r)' \ [\hat{\sigma}^2 R(X'X)^{-1}R']^{-1} \ (R \hat{\beta} - r) \sim \chi_{(r)}^2
+$$
+
+```{r cache=TRUE, eval=FALSE, echo=TRUE}
+### Get the coefficient matrix of the gam model
+coefficients <- coefficients(gamm4_random$gam) %>% as.matrix()
+length(coefficients)
+
+b <- coefficients[26:53, ]
+
+b = b %>% as.matrix() #(20*1)
+# b
+
+### Generate the Identity matrix that is (rk * rk)
+R = diag(length(b)) #(20*20)
+# R 
+
+# R_T <- t(R) since R is indentiy matrix, the transpose should be the same 
+
+### Generate the Null hypothesis estimator 
+r = matrix(0, length(b), 1) #(20*1)
+# r
+
+### Get the variance covariance matrix of the gam model
+variance_covariance <- vcov(gamm4_random$gam)
+
+variance_cov <- variance_covariance[26:53, 26:53] #(20 *20)
+# variance
+
+### Wald test step by step ###
+
+## numerator 
+Rb <- R %*% b
+
+Rb_r <- Rb - r
+
+RB_r_trans <- t(Rb_r)
+
+numerator <- Rb_r %*% RB_r_trans
+
+## denominator
+R_var <- R %*% variance_cov
+
+R_var_R <- R_var %*% R
+
+inverse_var <- solve(R_var_R)
+
+#system is computationally singular: reciprocal condition number = 1.03534e-17
+
+## Wald statistic 
+
+Wald <- RB_r_trans %*% inverse_var %*% Rb_r
+
+Wald
+
+critical_value <- qchisq(0.05, , lower.tail=FALSE)
+
+critical_value
+
+Wald>critical_value
+
+```
+

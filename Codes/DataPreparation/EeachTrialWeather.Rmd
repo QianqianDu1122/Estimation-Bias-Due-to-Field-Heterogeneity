@@ -1,0 +1,142 @@
+---
+title: "weather_for_each_field"
+author: "Qianqian Du"
+date: "2023-10-22"
+output: html_document
+---
+
+```{r echo=FALSE, eval=TRUE, message=FALSE, cache=FALSE, warning=FALSE}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(here)
+library(patchwork)
+library(data.table)
+library(flextable)
+library(plm)
+library(gam)
+library(mgcv)
+library(aod)
+library(glmmTMB)
+library(matrixcalc)
+library(gamm4)
+library(gratia)
+library(lme4)
+library(insight)
+library(scam)
+library(forstringr)
+```
+
+
+Already saved weather data from `daymetr`, see code in get_weather_for_agg.R
+
+```{r}
+#/*=================================================*/
+#' # ### === get precipitation data === ###
+#/*=================================================*/
+
+weather_precip <- readRDS(here::here("Shared", "Data", "Raw_data", "Weather_data", "weather_2021.rds")) %>% 
+  rbind(readRDS(here::here("Shared", "Data", "Raw_data", "Weather_data", "weather_2022.rds"))) %>% 
+  dplyr::select(!(month)) %>% 
+  rbind(readRDS(here::here("Shared", "Data", "Raw_data", "Weather_data", "weather_2023.rds"))) %>%
+  data.table() %>% 
+  .[, date := yday - 1 + ymd(paste0(year, "-01-01"))] %>% 
+  .[, month := as.numeric(format(weather_precip$date, "%m"))]
+
+precip_4_10 <- weather_precip %>% 
+  .[month %in% 4:10, ] %>% 
+  .[, .(month_precip = sum(prcp)), by = c("year", "month", "field")] %>% 
+  dcast(., year + field ~ month, value.var = "month_precip")
+
+precip_4_10
+
+ggplot(data = precip_4_10)+
+  geom_bar(aes(x = month, y = month_precip), stat = "identity", position = position_dodge()) +
+  facet_wrap(.~field)
+
+
+```
+
+
+```{r}
+
+#/*=================================================*/
+#' # ### === get Extreme Degree Days data === ###
+#/*=================================================*/
+
+weather_temp <- readRDS(here::here("Shared", "Data", "Raw_data", "Weather_data", "weather_2021.rds")) %>% 
+  rbind(readRDS(here::here("Shared", "Data", "Raw_data", "Weather_data", "weather_2022.rds"))) %>% 
+  dplyr::select(!(month)) %>% 
+  rbind(readRDS(here::here("Shared", "Data", "Raw_data", "Weather_data", "weather_2023.rds"))) %>%
+  data.table() %>% 
+  .[, date := yday - 1 + ymd(paste0(year, "-01-01"))] %>% 
+  .[, month := as.numeric(format(weather_temp$date, "%m"))] %>% 
+  .[month %in% 4:10, ] %>% 
+  .[, GDD_daily := pmax(0, ((tmax + tmim)/2) - 10)] %>%  # base temp for corn is 50F, which is 10C.
+  .[, EDD_daily := pmax(0, tmax - 29)] %>% 
+  .[, .(EDD = sum(EDD_daily), GDD = sum(GDD_daily)), by = c("year", "field")]
+
+```
+
+combine the weather information together
+
+```{r}
+weather <- left_join(precip_4_10, weather_temp, by = c("field", "year"))
+
+# save the weather data for analysis
+
+# saveRDS(weather, here::here("Shared", "Data", "Data_for_analysis", "weather_GDD_2023.rds"))
+```
+
+
+```{r}
+#/*=================================================*/
+#' # ### === combine field data with field weather === ###
+#/*=================================================*/
+
+corn_2023 <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data2023.rds")) %>% 
+  dplyr::select(year, field, yield, n_rate, elev, slope, curv, aspect, tpi, clay, sand, silt) %>% 
+  mutate(field = str_extract(field, "(?<=\\_)[^\\_]+"))
+
+
+corn <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data2021.rds")) %>% 
+  rbind(readRDS(here::here("Shared", "Data", "Data_for_analysis", "data2022.rds"))) %>% 
+  rbind(corn_2023) %>% 
+  setnames("field", "area") %>% 
+  filter(!(area %in% c("P1", "D09", "R37")))
+
+
+weather <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "weather_GDD_2023.rds")) %>% 
+  .[, area := str_extract(field, "(?<=\\_)[^\\_]+")]
+
+weather$area[weather$area == "Gingerich1"] <- "Field1"
+
+weather$year <- as.character(weather$year)
+
+
+final_data <- left_join(corn, weather, by = c("area", "year"))
+
+final_data$field %>% unique()
+
+final_data$field[final_data$field == "Gingerich_Gingerich1_2023"] <- "Gingerich_Field1_2023"
+
+final_data$area[final_data$area == "Dougshome"] <- "DougsHome"
+
+final_data$area %>% unique()
+### save the final data with both corn, soil, and weather data
+
+# saveRDS(final_data, here::here("Shared", "Data", "Data_for_analysis", "data_for_analysis_new_2023.rds"))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+

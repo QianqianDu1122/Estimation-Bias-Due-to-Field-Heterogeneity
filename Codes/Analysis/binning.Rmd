@@ -1,0 +1,102 @@
+---
+title: "binning"
+author: "Qianqian Du"
+date: "2024-12-17"
+output: html_document
+---
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(effects)
+library(ggplot2)
+library(data.table)
+library(lfe)
+library(Matrix)
+```
+
+```{r}
+all_data <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data_for_analysis_revise.rds")) %>% 
+  filter(trial != "Pistorius_Loveless_2021") %>% 
+  filter(trial != "Pistorius_Elsie_2021") %>% 
+  filter(trial != "AnthonyFarms_F21_2023") %>% 
+  data.table()
+
+```
+
+
+```{r}
+# Define your N rate bins
+all_data$N_bins <- cut(
+  all_data$n_rate,
+  breaks = seq(min(all_data$n_rate), max(all_data$n_rate), by = 25), # Adjust range and bin size as needed
+  include.lowest = TRUE,
+  labels = c("0-25", "25-50", "50-75", "75-100", "100-125", "125-150", "150-175", "175-200", "200-225", "225-250", "250-275", "275-300", "300-325", "325-350", "350-375", "375-400")
+)
+
+# # Scatterplot of yield by N rates with binned colors
+# ggplot(all_data, aes(x = n_rate, y = yield, color = N_bins)) +
+#   geom_point() +
+#   labs(
+#     title = "Scatterplot of Yield by N Rates",
+#     x = "N Rate (kg/ha)",
+#     y = "Yield"
+#   ) +
+#   theme_minimal()
+
+# Fit a model for yield response to N_bins
+model <- lm(yield ~ N_bins, data = all_data)
+summary(model)
+
+my_data <- all_data
+
+# Re-run the code with the renamed dataset
+my_data_clean <- na.omit(my_data[, c("yield", "N_bins")])
+
+# Add predicted values to the cleaned dataset
+my_data_clean$predicted_yield <- predict(model)
+
+
+ggplot(my_data_clean, aes(x = N_bins, y = predicted_yield)) +
+  geom_point(color = "blue", size = 3) +
+  geom_line(aes(group = 1), color = "blue") +
+  labs(
+    title = "Estimated Yield Response by N Bins",
+    x = "N Rate Bins",
+    y = "Predicted Yield"
+  ) +
+  theme_minimal()+
+  scale_x_discrete(limits = c("0-25", "25-50", "50-75", "75-100", "100-125", 
+                              "125-150", "150-175", "175-200", "200-225", "225-250"))
+
+
+
+# Add fixed effects in the binning model
+fe_model <- felm(yield ~ N_bins | trial, data = all_data)
+
+my_data_clean$predicted_yield_fe <- fe_model$fitted.values
+
+# ggplot()+
+#   geom_smooth(aes(x = N_bins, y = predicted_yield), data = my_data_clean)
+```
+
+
+```{r}
+
+ggplot(data = all_data)+
+  # geom_point(aes(x = n_rate, y = yield), size = 0.2)+
+  geom_smooth(aes(x = n_rate, y = yield))+
+  xlim(NA, 250)+
+  ylim(100, 250)
+
+# Plot with a specified number of knots
+ggplot(data = all_data) +
+  geom_smooth(aes(x = n_rate, y = yield), 
+              method = "gam", 
+              formula = y ~ s(x, bs = "cs", k = 3)) + # 'k' controls number of knots
+  xlim(NA, 250) +
+  ylim(100, 250) +
+  theme_minimal()
+```

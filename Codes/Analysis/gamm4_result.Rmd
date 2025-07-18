@@ -1,0 +1,285 @@
+---
+title: "gamm4_result"
+author: "Qianqian Du"
+date: "2023-06-15"
+output: html_document
+---
+
+```{r echo=FALSE, eval=TRUE, message=FALSE, cache=FALSE, warning=FALSE}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(here)
+library(patchwork)
+library(data.table)
+library(flextable)
+library(plm)
+library(gam)
+library(mgcv)
+library(aod)
+library(glmmTMB)
+library(matrixcalc)
+library(gamm4)
+library(gratia)
+library(lme4)
+library(insight)
+library(Matrix)
+library(scam)
+```
+
+```{r cache=TRUE}
+all_data <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data_for_analysis_revise.rds")) %>% 
+  filter(trial != "Pistorius_Loveless_2021") %>% 
+  filter(trial != "Pistorius_Elsie_2021") %>% 
+  filter(trial != "AnthonyFarms_F21_2023") %>% 
+  data.table()
+
+all_data %>% filter(field == "F17")
+
+
+# all_data$field %>% unique()
+
+
+## To save time, use a smaller dataset for testing the packages ##
+subset_data <- all_data[field %in% c("F98", "42ac", "Florence80", "Wirth", "PerrySouth", "Field1"), ]
+```
+
+
+```{r}
+
+ggplot(data = all_data[year == 2023, ]) +
+  geom_point(aes(x = n_rate, y = yield), size = 0.1) +
+  geom_smooth(aes(x = n_rate, y = yield)) +
+  geom_hline(yintercept = mean(all_data$yield), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(. ~ trial)+
+  theme_bw()
+
+
+ggplot(data = all_data[year == 2022, ]) +
+  geom_point(aes(x = n_rate, y = yield), size = 0.1) +
+  geom_smooth(aes(x = n_rate, y = yield)) +
+  geom_hline(yintercept = mean(all_data$yield), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(. ~ trial)+
+  theme_bw()
+
+
+ggplot(data = all_data[year == 2021, ]) +
+  geom_point(aes(x = n_rate, y = yield), size = 0.1) +
+  geom_smooth(aes(x = n_rate, y = yield)) +
+  geom_hline(yintercept = mean(all_data$yield), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(. ~ trial)+
+  theme_bw()
+
+
+```
+
+# Pooled 
+
+```{r cache=TRUE}
+pooled_gam <- gamm4(yield ~ s(n_rate, k = 4) + s(elev) + s(slope) + s(curv), data = all_data)
+
+pooled_gam_full <- gamm4(yield ~ s(n_rate, k = 4) + s(elev) + s(slope) + s(curv) + s(clay) + s(silt) + s(Apr) + s(May) + s(Jun) + s(Jul) + s(Aug) + s(GDD) + s(EDD), data = all_data)
+
+
+summary(pooled_gam$gam)
+```
+
+
+# Fixed effect (field)
+
+```{r cache=TRUE}
+###--- gamm4() with field fixed effect ---###
+
+fixed_gam <- gamm4(yield ~ s(n_rate, k = 4) + s(elev) + s(slope) + s(curv) + field, data = all_data)
+
+summary(fixed_gam$gam)
+```
+
+
+## Visualize the two models' production function 
+
+```{r cache=TRUE}
+##-- plot for without fixed effect --##
+eval_data <- expand_grid(
+  n_rate = seq(
+    quantile(all_data$n_rate, prob = 0.05, na.rm = TRUE), 
+    quantile(all_data$n_rate, prob = 0.95, na.rm = TRUE), 
+    length = 300
+  ),
+  elev = mean(all_data$elev, na.rm = TRUE),
+  slope = mean(all_data$slope, na.rm = TRUE),
+  curv = mean(all_data$curv, na.rm = TRUE)
+) %>% 
+data.table() 
+
+##-- plot for without fixed effect --##
+corn_price = 4
+N_price = 0.4
+
+pooled <- eval_data %>% 
+  .[, y_hat := predict(pooled_gam$gam, newdata = eval_data)] %>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+EONR_pooled <- filter(pooled, profit == max(profit))
+
+
+pooled_fig <- ggplot(data = pooled)+
+  geom_line(aes(x = n_rate, y = y_hat))
+
+
+##-- fixed effect --##
+
+eval_data_fixed <- expand_grid(
+  n_rate = seq(
+    quantile(all_data$n_rate, prob = 0.05, na.rm = TRUE), 
+    quantile(all_data$n_rate, prob = 0.95, na.rm = TRUE), 
+    length = 300
+  ),
+  elev = mean(all_data$elev, na.rm = TRUE),
+  slope = mean(all_data$slope, na.rm = TRUE),
+  curv = mean(all_data$curv, na.rm = TRUE),
+  field = "SyfordNorthEast"
+) %>% 
+data.table() 
+
+##-- plot for with fixed effect --##
+
+fixed <- eval_data_fixed %>% 
+  .[, y_hat := predict(fixed_gam$gam, newdata = eval_data_fixed)]%>% 
+  .[, profit := y_hat*corn_price - n_rate*N_price]
+
+EONR_fixed <- filter(fixed, profit == max(profit))
+
+
+fixed_fig <- ggplot(data = fixed)+
+  geom_line(aes(x = n_rate, y = y_hat))
+
+
+##-- over all figure --##
+ggplot()+
+  geom_line(aes(x = n_rate, y = y_hat), data = fixed, color = "red")+
+  geom_line(aes(x = n_rate, y = y_hat), data = pooled)+
+  theme_bw()+
+  ggtitle("black is pooled")+
+  ylab("Yield (bu/ac)")+
+  xlab("N rate (lb/ac)")
+
+```
+
+Change the range of the figure
+```{r cache=TRUE}
+
+fixed_change_y <- eval_data_fixed %>% 
+  .[, y_hat := predict(fixed_gam$gam, newdata = eval_data_fixed)] %>% 
+  .[, y_hat_1 := y_hat - 330 ]
+
+
+fixed_fig_1 <- ggplot()+
+  geom_line(aes(x = n_rate, y = y_hat_1), data = fixed_change_y, color = "red")+
+  geom_line(aes(x = n_rate, y = y_hat), data = pooled)+
+  theme_bw()+
+  ylab("Yield (bu/ac)")+
+  xlab("N rate (lb/ac)")
+  # annotate("text", label = "black is pooled, \n s(N, k = 6)", x = 130, y = 180)+
+  # annotate("text", label = "pooled 231, fixed 250 (corner solu)", x = 200, y = 165)
+
+fixed_fig_1
+
+```
+
+
+# Based on the random effect result, do the Mundlak test
+
+## Random effect (with field means for the Mundlak method)
+
+```{r cache=TRUE, cache.lazy = FALSE, eval=FALSE, echo=TRUE}
+###--- gamm4() with random effect ---###
+
+gamm4_random <- gamm4(yield ~ s(n_rate, k = 4) + s(elev, k = 8) + s(slope, k = 8) + s(curv, k = 8) + s(mean_N, k = 8) + s(mean_elev, k = 8) + s(mean_slope, k = 8) + s(mean_curv, k = 8), random = ~ (1 | field), data = all_data)
+# takes 27 mins
+
+# gamm4_random <- gamm4(yield ~ s(n_rate, k = 6) + s(elev, k = 6) + s(slope, k = 6) + s(curv, k = 6) + s(mean_N, k = 6) + s(mean_elev, k = 6) + s(mean_slope, k = 6) + s(mean_curv, k = 6), random = ~ (1 | field), data = all_data)
+
+summary(gamm4_random$gam)
+```
+
+
+## Wald test for GAM model
+
+$$
+W = (R \hat{\beta} - r)' \ [\hat{\sigma}^2 R(X'X)^{-1}R']^{-1} \ (R \hat{\beta} - r) \sim \chi_{(r)}^2
+$$
+
+```{r cache=TRUE, eval=FALSE, echo=TRUE}
+### Get the coefficient matrix of the gam model
+coefficients <- coefficients(gamm4_random$gam) %>% as.matrix()
+length(coefficients)
+
+b <- coefficients[26:53, ]
+
+b = b %>% as.matrix() #(20*1)
+# b
+
+### Generate the Identity matrix that is (rk * rk)
+R = diag(length(b)) #(20*20)
+# R 
+
+# R_T <- t(R) since R is indentiy matrix, the transpose should be the same 
+
+### Generate the Null hypothesis estimator 
+r = matrix(0, length(b), 1) #(20*1)
+# r
+
+### Get the variance covariance matrix of the gam model
+variance_covariance <- vcov(gamm4_random$gam)
+
+variance_cov <- variance_covariance[26:53, 26:53] #(20 *20)
+# variance
+
+### Wald test step by step ###
+
+## numerator 
+Rb <- R %*% b
+
+Rb_r <- Rb - r
+
+RB_r_trans <- t(Rb_r)
+
+numerator <- Rb_r %*% RB_r_trans
+
+## denominator
+R_var <- R %*% variance_cov
+
+R_var_R <- R_var %*% R
+
+inverse_var <- solve(R_var_R)
+
+#system is computationally singular: reciprocal condition number = 1.03534e-17
+
+## Wald statistic 
+
+Wald <- RB_r_trans %*% inverse_var %*% Rb_r
+
+Wald
+
+critical_value <- qchisq(0.05, , lower.tail=FALSE)
+
+critical_value
+
+Wald>critical_value
+
+```
+
+Reject the Null, the field specific character is correlated with the field-variate variables. 
+
+---
+
+# Questions left: 
+
++ I only included elevation, slope, and curvature as covariates, because some fields has ec or other soil variables some fields doesn't (especially 2021 and 2022 are different). these three are the only 3 commonly had variables. Do you think I should try to get more soil data? I am not sure how well that will go though. 
+
+
+---
+
+
+

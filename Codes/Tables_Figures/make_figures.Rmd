@@ -1,0 +1,481 @@
+---
+title: "Fixed_effect_figure"
+author: "Qianqian Du"
+date: "2023-05-04"
+output: html_document
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(here)
+library(patchwork)
+library(data.table)
+library(flextable)
+library(latex2exp)
+library(dplyr)
+library(ggstar)
+library(tmap)
+library(modelsummary)
+library(forstringr)
+```
+
+```{r}
+trial_design <- st_read('/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Data/Growers/WarnerFarms_ShellebargerPainterCreekArcanum_2022/TrialDesign/trial-design-n.shp') %>%
+  mutate(N_rate = factor(round(tgtn*2.4336)))
+
+
+gc_rate = 48*2.4336
+
+### === plot the locations ===###
+shp <- st_read("/Users/qianqiandu/Downloads/tl_2012_us_state/tl_2012_us_state.shp") %>% 
+  st_transform(crs = 4326)
+
+```
+
+```{r}
+
+all_data <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data_for_analysis_revise.rds")) %>% 
+  filter(trial != "Pistorius_Loveless_2021") %>% 
+  filter(trial != "Pistorius_Elsie_2021") %>% 
+  filter(trial != "AnthonyFarms_F21_2023") %>% 
+  data.table() %>% 
+  .[, area1 := str_extract_part(field, before = FALSE, pattern = "_")] %>% 
+  .[, year := str_extract_part(area1, before = FALSE, pattern = "_")]
+
+all_data$trial %>% unique()
+
+```
+
+
+```{r trial-design-demo, fig.cap = "Latin square trial design map"}
+trial_design_fig <- tm_shape(trial_design) +
+  tm_polygons(col = "N_rate",
+              title = "N target rate (lb/ac)",
+              palette = "Reds"
+              )+
+  tm_layout(
+  legend.outside = "TRUE",
+  frame = FALSE,
+  legend.title.size = 1.2,
+  legend.text.size = 0.9
+)
+
+trial_design_fig
+```
+
+
+
+```{r as-applied-n-fig, fig.cap="As-applied variable N rates", dependson="analyses"}
+as_applied_n <- readRDS("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Data/Growers/WarnerFarms_ShellebargerPainterCreekArcanum_2022/Intermediate/as_applied_n.rds")
+
+as_applied_n
+
+as_applied_fig <- ggplot(data = as_applied_n)+
+  geom_sf(aes(fill = input_rate), lwd = 0)+
+  scale_fill_distiller(palette = "Reds", direction = 1) +
+  theme_bw() +
+  theme_void() +
+  labs(fill = "As applied N rates \n (lb/ac)") +
+  theme(legend.position = "bottom") +
+  theme(
+    legend.title = element_text(size = 9),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.4, "cm"),
+    legend.key.width = unit(0.6, "cm")
+  )
+
+as_applied_fig
+
+```
+
+```{r yield-fig}
+yield_data <- readRDS("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Data/Growers/WarnerFarms_ShellebargerPainterCreekArcanum_2022/Intermediate/yield_polygons.rds")
+
+see_yield <- ggplot(data = yield_data) +
+  geom_sf(aes(fill = yield), lwd = 0) +
+  scale_fill_distiller(palette = "Greens", direction = 1) +
+  theme_void() +
+  labs(fill = "Yield level \n (bu/ac)") +
+  theme(legend.position = "bottom") +
+  theme(
+    legend.title = element_text(size = 9),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.4, "cm"),
+    legend.key.width = unit(0.7, "cm")
+  )
+
+see_yield
+
+```
+
+
+```{r as-applied-and-yield-demo, fig.cap="As-applied variable N rates and observed yield"}
+N_yield_fig <- as_applied_fig | see_yield
+
+N_yield_fig
+```
+
+```{r observational-unit, fig.cap="Illustration of the observational unit"}
+
+analysis_data_unit <- st_read("/Users/qianqiandu/Library/CloudStorage/Box-Box/DIFM_HQ/Data/Growers/WarnerFarms_ShellebargerPainterCreekArcanum_2022/Analysis-Ready/analysis_data.shp") %>% 
+  dplyr::select(n_rate, yild_vl)
+
+obser_unit <- ggplot()+
+  geom_sf(data = analysis_data_unit, aes(fill = yild_vl))+
+  scale_fill_distiller(palette = "Greens", direction = 1) +
+  theme_void() +
+  labs(fill = "Yield level \n (bu/ac)") +
+  theme(legend.position = "bottom") +
+  theme(
+    legend.title = element_text(size = 9),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.4, "cm"),
+    legend.key.width = unit(0.7, "cm")
+  )
+
+obser_unit
+
+```
+
+
+
+```{r data-summary, tab.cap = "On-farm precision experiment trials data summay", cache=TRUE}
+
+###==== data-summary ====###
+
+data_summary <- all_data %>% 
+  data.table() %>%
+  .[, .(mean_yield = mean(yield), 
+                     mean_N = mean(n_rate), 
+                     min_N = min(n_rate),
+                     max_N = max(n_rate),
+                     N = .N), .(trial)] %>% 
+  as.data.frame() %>% 
+  tibble::rowid_to_column() %>% 
+  mutate(rowid = sprintf("%02d", rowid)) %>% 
+  mutate(Field = paste("trial", rowid, sep = " "))
+
+###--- summary table ---###
+
+# data_summar_table <- data_summary %>%
+#   as.data.frame() %>% 
+#   mutate(Field = paste("trial", rowid, sep = " ")) %>% 
+#   dplyr::select("Field", "year", "N", "mean_yield", "mean_N", "max_N", "min_N")%>%
+#   mutate(across(where(is.numeric), round, digits=2)) %>% 
+#   flextable() %>% 
+#   set_header_labels(
+#     values = list(
+#       mean_yield = "Average Yield",
+#       mean_N = "Average N",
+#       max_N = "Max N",
+#       min_N = "Min N",
+#       N = "Number of subplots"
+#       )
+#     )%>%
+#   font(fontname = 'Times')%>%
+#   autofit() %>% 
+#   align(., align = "center", part = "all")
+# 
+# # data_summar_table
+
+```
+
+```{r}
+
+tgtn_data <- read.csv(here::here("Shared", "Data", "Data_for_analysis", "tgtn.csv")) %>% 
+  filter(trial != "Pistorius_Loveless_2021") %>% 
+  filter(trial != "Pistorius_Elsie_2021") %>% 
+  filter(trial != "AnthonyFarms_F21_2023")
+
+
+unique_trials <- unique(tgtn_data$trial)
+trial_mapping <- setNames(
+  paste0("Trial ", sprintf("%02d", seq_along(unique_trials))),
+  unique_trials
+)
+
+# Step 2: Convert trial to a factor with the correct order
+tgtn_data$trial <- factor(tgtn_data$trial, levels = unique_trials)
+all_data$trial <- factor(all_data$trial, levels = unique_trials)
+```
+
+
+```{r}
+# Step 3: Use this mapping in the ggplot
+N_range <- ggplot() +
+  geom_line(aes(x = trial, y = n_rate), data = all_data) +
+  geom_point(aes(x = trial, y = tgtn), data = tgtn_data, size = 0.95) +
+  geom_point(aes(x = trial, y = sq_rate), color = "red", data = tgtn_data, size = 1.5) +
+  scale_x_discrete(labels = trial_mapping) +  # Apply the mapping to the x-axis labels
+  xlab("N Trials") +
+  ylab("Target N Rates and As-applied N Rates") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+N_range
+```
+
+```{r}
+# Plot using anonymized trial names
+facet_yield_N_2021 <- ggplot(data = all_data[year == 2021, ]) +
+  geom_point(aes(x = n_rate, y = yield), size = 0.1) +
+  geom_smooth(aes(x = n_rate, y = yield)) +
+  geom_hline(yintercept = mean(all_data$yield), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(. ~ trial, labeller = labeller(trial = trial_mapping)) +
+  theme_bw()+
+  xlab("N rate")
+
+
+facet_yield_N_2022 <- ggplot(data = all_data[year == 2022, ]) +
+  geom_point(aes(x = n_rate, y = yield), size = 0.1) +
+  geom_smooth(aes(x = n_rate, y = yield)) +
+  geom_hline(yintercept = mean(all_data$yield), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(. ~ trial, labeller = labeller(trial = trial_mapping))+
+  theme_bw()+
+  xlab("N rate")
+
+
+facet_yield_N_2023 <- ggplot(data = all_data[year == 2023, ]) +
+  geom_point(aes(x = n_rate, y = yield), size = 0.1) +
+  geom_smooth(aes(x = n_rate, y = yield)) +
+  geom_hline(yintercept = mean(all_data$yield), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(. ~ trial, labeller = labeller(trial = trial_mapping))+
+  theme_bw()+
+  xlab("N rate")
+
+
+```
+
+
+```{r yield-bar}
+yield_by_field <- ggplot(all_data, aes(x = field, y = yield)) +
+  geom_boxplot(outlier.shape = NA) +
+  stat_summary(fun.y = mean, geom = "point", size = 1.2) +
+  ylab("Yield (bu/ha)")+
+  xlab("Field")+
+  theme_minimal()
+  # theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+yield_by_field
+```
+
+
+```{r N-observations, fig.cap="Number of observations in each trial"}
+
+# Ensure 'trial' is ordered from Trial 01 to Trial 41
+data_summary$trial <- factor(data_summary$trial, levels = names(trial_mapping))
+
+# Plot with the reordered x-axis
+N_observations <- ggplot(data_summary) +
+  geom_bar(stat = "identity", aes(x = trial, y = N)) +
+  scale_x_discrete(labels = trial_mapping) +  # Apply trial_mapping for labels
+  xlab("") +
+  ylab("Number of Subplots") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Display the plot
+N_observations
+
+ggsave(N_observations, filename = "/Users/qianqiandu/Library/CloudStorage/Box-Box/Field_fixed_effects_EndogeneityTest/Shared/Figures_for_JAAEA/R1_Figures/N_observations.png")
+
+```
+
+
+
+```{r boostrapping-table, tab.cap = "Mean and 95% confidence intervals for the difference in slopes between the pooled model and the fixed effects model"}
+
+data_for_table <- readRDS("/Users/qianqiandu/Library/CloudStorage/Box-Box/Field_fixed_effects_EndogeneityTest/Shared/Data/Data_for_analysis/boostrapping_result.rds")
+
+cv_table <- data_for_table %>% 
+  dplyr::select("N_level", "mean", "confidence_interval") %>% 
+  mutate(N_level = sub("diff_", "", N_level)) %>% 
+  flextable() %>% 
+  set_header_labels(
+    values = list(
+      N_level = "N level (lb/ac)",
+      mean = "Mean of the Slope Difference",
+      confidence_interval = "95% Confidence Interval"
+    ))%>%
+  font(fontname = 'Times')%>%
+  autofit() %>% 
+  align(., align = "center", part = "all") 
+
+cv_table
+
+```
+
+
+
+
+```{r conceptual-figure, fig.cap="Conceptual demonstration of the potential endogeneity problem when using data from multiple fields"}
+###==== {r conceptual-steps-figure} ====###
+
+####---- gennerating the two yield response curve ----####
+a = 216.25625858
+b = 10.10459998
+c = -0.06728008
+a1 = 320.83129890
+b1 = 6.60704934
+c1 = -0.06428555
+
+low <- function(x){
+  (a + b * x + c * I(x^2)) * (x <= -0.5 * b/c) + (a + I(-b^2/(4 * c))) * (x > -0.5 * b/c)
+}
+
+high <- function(x){
+  (a1 + b * x + c * I(x^2)) * (x <= -0.5 * b/c) + (a1 + I(-b^2/(4 * c))) * (x > -0.5 * b/c)
+}
+
+
+plot_data <- data.table(x = seq(8, 82, length = 1000)) %>% 
+  .[,y_VIhigh := high(x)] %>% 
+  .[,y_VIlow := low(x)] %>% 
+  melt(id.var = "x") %>% 
+  .[, type := case_when(
+    variable == "y_VIhigh" ~ "VI_high",
+    variable == "y_VIlow" ~ "VI_low"
+  )]
+
+
+find_point_x <- plot_data%>%filter(variable == 'y_VIlow', x >= 62, x<=62.5)
+find_point_y <- plot_data%>%filter(variable == 'y_VIhigh', x >= 38, x<=38.5)
+
+df_conceptual <- data.frame(
+  xh = find_point_y[6, x],
+  yh = find_point_y[6, value],
+  xl = find_point_x[6, x],
+  yl = find_point_x[6, value]
+  )
+
+slope_conceptual = 0.15
+
+df_conceptual <- df_conceptual%>%
+  data.table()%>%
+  .[, `:=` (
+    xl1 = xl + 11,
+    xl2 = xl - 14,
+    yl1 = yl + slope_conceptual*11*12.5+1,
+    yl2 = yl - slope_conceptual*14*12.5+1,
+    xh1 = xh + 11,
+    xh2 = xh - 14,
+    yh1 = yh + slope_conceptual*11*12.5+1,
+    yh2 = yh - slope_conceptual*14*12.5+1
+    )]
+
+df_conceptual_1 <- data.frame(
+  x = df_conceptual[, c(xl1, xl2, xh1, xh2)],
+  y = df_conceptual[, c(yl1, yl2, yh1, yh2)],
+  group = c('VI_low', 'VI_low', 'VI_high', 'VI_high')
+  )
+
+####---- gennerating the black curve ----####
+
+plot_data_1_1 <- data.table(x = seq(35, 82, length = 1000)) %>% 
+  .[,y_VIhigh := high(x)] %>% 
+  melt(id.var = "x") %>% 
+  .[, type := case_when(
+    variable == "y_VIhigh" ~ "VI_high"
+  )]
+
+
+plot_data_2_2 <- data.table(x = seq(8, 45, length = 1000)) %>% 
+  .[,y_VIlow := low(x)] %>% 
+  melt(id.var = "x") %>% 
+  .[, type := case_when(
+    variable == "y_VIlow" ~ "VI_low"
+  )]
+
+plot_data_1 <- rbind(plot_data_1_1, plot_data_2_2)
+
+plot_data_2 <- plot_data_1 %>% 
+  .[variable == "y_VIhigh", value := value - 120] %>% 
+  .[variable == "y_VIlow", value := value + 170]
+
+ggplot(data = plot_data_2)+
+  geom_point(aes(x = x, y = value, color = variable))+
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), aes(y = value, x = x), color = "black", data = plot_data_1, size = 1.3)
+
+####---- gennerating the points ----####
+generate_points <- data.frame(
+  x_low = c(12, 16, 19, 20, 24, 25, 30, 34),
+  y_low = c(350, 340, 380, 450, 390, 460, 465, 480),
+  x_high = c(50, 55, 61, 65, 69, 73, 77, 79),
+  y_high = c(650, 690, 700, 720, 690, 750, 713, 680)
+)
+
+
+####---- gennerating the points for fig ----####
+generate_points_2 <- data.frame(
+  
+  x_low = c(50, 55, 61, 65, 69, 73, 77, 79),
+  y_low = c(540, 590, 580, 600, 610, 570, 610, 590),
+  x_high = c(22, 26, 29, 30, 34, 35, 40, 44),
+  y_high = c(480, 530, 530, 580, 520, 570, 653, 620)
+)
+
+############========================== conceptual steps figure ======================################
+
+conceptual <- ggplot()+
+  geom_smooth(aes(x = x, y = value, color = type), size = 0.8, data = plot_data, se = FALSE)+
+  scale_color_manual(
+    values = c(
+    "VI_high" = "#CA6F1E", 
+        "VI_low" = "#2E86C1"
+      )
+    )+
+  geom_linerange(aes(x=8, y=NULL, ymin=240, ymax=740))+
+  geom_linerange(aes(x=NULL, y=240, xmin=8, xmax=85))+
+  labs(x = 'N Rate', y ='Yield') +
+  annotate('text', x = 40, y =710, label = 'yield response curve at field 1', size = 5, color = '#CA6F1E', family = 'Times')+
+  annotate('text', x = 60, y =510, label = 'yield response curve at field 2', size = 5, color = '#2E86C1', family = 'Times')+
+  annotate('text', x = 70, y =630, label = 'pooled yield response curve', size = 5, color = 'black', family = 'Times')+
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), aes(y = value, x = x), color = "black", data = plot_data_1, size = 1.3)+
+  annotate('text', x = 81, y = 240-19, label = 'N rate', size = 5.5, family = 'Times')+
+  annotate('text', x = 8, y = 750, label = 'Yield', size = 5.5, family = 'Times')+
+  geom_point(aes(x = x_low, y = y_low), data = generate_points, color = '#2E86C1')+
+  geom_point(aes(x = x_high, y = y_high), data = generate_points, color = '#CA6F1E')+
+  coord_fixed(0.1)+
+  xlim(8, 92)+
+  theme_void()+
+  theme(legend.position = "none")
+
+conceptual
+
+
+conceptual_2 <- ggplot()+
+  geom_smooth(aes(x = x, y = value, color = type), size = 0.8, data = plot_data, se = FALSE)+
+  scale_color_manual(
+    values = c(
+    "VI_high" = "#CA6F1E", 
+        "VI_low" = "#2E86C1"
+      )
+    )+
+  geom_linerange(aes(x=8, y=NULL, ymin=240, ymax=740))+
+  geom_linerange(aes(x=NULL, y=240, xmin=8, xmax=85))+
+  labs(x = 'N Rate', y ='Yield') +
+  annotate('text', x = 40, y =710, label = 'yield response curve at field 1', size = 5, color = '#CA6F1E', family = 'Times')+
+  annotate('text', x = 60, y =510, label = 'yield response curve at field 2', size = 5, color = '#2E86C1', family = 'Times')+
+  annotate('text', x = 70, y =630, label = 'pooled yield response curve', size = 5, color = 'black', family = 'Times')+
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), aes(y = value, x = x), color = "black", data = plot_data_2, size = 1.3)+
+  annotate('text', x = 81, y = 240-19, label = 'N rate', size = 5.5, family = 'Times')+
+  annotate('text', x = 8, y = 750, label = 'Yield', size = 5.5, family = 'Times')+
+  geom_point(aes(x = x_low, y = y_low), data = generate_points_2, color = '#2E86C1')+
+  geom_point(aes(x = x_high, y = y_high), data = generate_points_2, color = '#CA6F1E')+
+  coord_fixed(0.1)+
+  xlim(8, 92)+
+  theme_void()+
+  theme(legend.position = "none")
+
+conceptual_2
+
+
+
+# conceptual+ conceptual_2
+
+```
+
+
+

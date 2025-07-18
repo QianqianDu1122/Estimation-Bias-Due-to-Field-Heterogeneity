@@ -1,0 +1,88 @@
+---
+title: "statistical_summary_table"
+author: "Qianqian Du"
+date: "2024-12-18"
+output: word_document
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(flextable)
+
+```
+
+```{r}
+all_data <- readRDS(here::here("Shared", "Data", "Data_for_analysis", "data_for_analysis_revise.rds")) %>% 
+  filter(trial != "Pistorius_Loveless_2021") %>% 
+  filter(trial != "Pistorius_Elsie_2021") %>% 
+  filter(trial != "AnthonyFarms_F21_2023") %>% 
+  data.table()
+
+```
+
+```{r}
+# Summarize yields and covariates in a long format for better presentation
+summary_table <- all_data %>%
+  summarise(
+    Yield = c(mean(yield, na.rm = TRUE), sd(yield, na.rm = TRUE),
+              min(yield, na.rm = TRUE), max(yield, na.rm = TRUE)),
+    N = c(mean(n_rate, na.rm = TRUE), sd(n_rate, na.rm = TRUE),
+              min(n_rate, na.rm = TRUE), max(n_rate, na.rm = TRUE)),
+    Elev = c(mean(elev, na.rm = TRUE), sd(elev, na.rm = TRUE),
+             min(elev, na.rm = TRUE), max(elev, na.rm = TRUE)),
+    Slope = c(mean(slope, na.rm = TRUE), sd(slope, na.rm = TRUE),
+              min(slope, na.rm = TRUE), max(slope, na.rm = TRUE)),
+    Curv = c(mean(curv, na.rm = TRUE), sd(curv, na.rm = TRUE),
+             min(curv, na.rm = TRUE), max(curv, na.rm = TRUE)),
+    Clay = c(mean(clay, na.rm = TRUE), sd(clay, na.rm = TRUE),
+             min(clay, na.rm = TRUE), max(clay, na.rm = TRUE)),
+    Silt = c(mean(silt, na.rm = TRUE), sd(silt, na.rm = TRUE),
+             min(silt, na.rm = TRUE), max(silt, na.rm = TRUE)),
+    Apr = c(mean(Apr, na.rm = TRUE), sd(Apr, na.rm = TRUE),
+            min(Apr, na.rm = TRUE), max(Apr, na.rm = TRUE)),
+    May = c(mean(May, na.rm = TRUE), sd(May, na.rm = TRUE),
+            min(May, na.rm = TRUE), max(May, na.rm = TRUE)),
+    Jun = c(mean(Jun, na.rm = TRUE), sd(Jun, na.rm = TRUE),
+            min(Jun, na.rm = TRUE), max(Jun, na.rm = TRUE)),
+    Jul = c(mean(Jul, na.rm = TRUE), sd(Jul, na.rm = TRUE),
+            min(Jul, na.rm = TRUE), max(Jul, na.rm = TRUE)),
+    Aug = c(mean(Aug, na.rm = TRUE), sd(Aug, na.rm = TRUE),
+            min(Aug, na.rm = TRUE), max(Aug, na.rm = TRUE)),
+    GDD = c(mean(GDD, na.rm = TRUE), sd(GDD, na.rm = TRUE),
+            min(GDD, na.rm = TRUE), max(GDD, na.rm = TRUE)),
+    EDD = c(mean(EDD, na.rm = TRUE), sd(EDD, na.rm = TRUE),
+            min(EDD, na.rm = TRUE), max(EDD, na.rm = TRUE))
+  ) %>%
+  t() %>% # Transpose for a variable-by-statistics format
+  as.data.frame()
+
+# Rename rows and columns for clarity
+colnames(summary_table) <- c("Mean", "SD", "Min", "Max")
+summary_table$Variable <- rownames(summary_table)
+rownames(summary_table) <- NULL
+summary_table <- summary_table %>%
+  select(Variable, Mean, SD, Min, Max) %>%
+  mutate(across(where(is.numeric), ~ round(., 2))) # Round all numeric columns to 2 digits
+
+
+# Create a clean and presentable flextable
+summary_flextable <- flextable(summary_table) %>%
+  set_caption("Summary Statistics of Yield, N rates, and Covariates in Analysis") %>%
+  set_header_labels(
+    Variable = "Variable",
+    Mean = "Mean",
+    SD = "Standard Deviation",
+    Min = "Minimum",
+    Max = "Maximum"
+  ) %>%
+  autofit() %>%  # Automatically adjust column widths
+  theme_vanilla() %>%  # Apply a clean theme
+  bold(part = "header") %>%  # Bold headers
+  align(align = "center", part = "all")  # Center-align all text
+
+# Print the flextable
+summary_flextable
+
+```
+
